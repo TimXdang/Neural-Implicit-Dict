@@ -271,12 +271,15 @@ class ImageFolderDataset(torch.utils.data.Dataset):
 
     __support_formats__ = ['.jpg', '.jpeg', '.png', '.gif', '.bmp'] 
 
-    def __init__(self, root):
+    def __init__(self, root, patch_size):
         super().__init__()
 
-        if root.endswith('.npy'):
+        self.root = root
+        self.file_names = []
+        if not root.endswith('.npy'):
             images = []
             for filename in sorted(os.listdir(root)):
+                self.file_names.append(filename)
                 _, suffix = os.path.splitext(filename)
                 if suffix.lower() not in self.__support_formats__:
                     continue
@@ -292,10 +295,16 @@ class ImageFolderDataset(torch.utils.data.Dataset):
             if img.ndim == 3:
                 img = img[..., None] # [N, H, W] -> [N, H, W, 1]
             self.images = torch.from_numpy(images) # [N, H, W, C]
+        
+        self.patch_size = patch_size 
+
+    @property
+    def num_patches_per_img(self):
+        return (self.full_image_size[0] // self.patch_size[0]) * (self.full_image_size[1] // self.patch_size[1])
 
     @property
     def num_images(self):
-        return self.images.shape[0]
+        return self.images.shape[0] * self.num_patches_per_img
 
     @property
     def num_channels(self):
@@ -303,13 +312,43 @@ class ImageFolderDataset(torch.utils.data.Dataset):
 
     @property
     def image_size(self):
-        return tuple(self.images.shape[1:3])
+        return self.patch_size
+    
+    @property
+    def full_image_size(self):
+        return (240, 240)
 
     def __len__(self):
         return self.num_images
 
     def __getitem__(self, idx):
-        return self.images[idx], torch.tensor(idx, dtype=torch.int64)
+        img_idx = idx // self.num_patches_per_img
+        patch_idx = idx % self.num_patches_per_img
+        path = os.path.join(self.root, self.file_names[img_idx])
+        assert os.path.exists(path), 'Index does not specify any images in the dataset'
+        
+        img = Image.open(path)
+
+        width, height = img.size  # Get dimensions
+
+        s = min(width, height)
+        left = (width - s) / 2
+        top = (height - s) / 2
+        right = (width + s) / 2
+        bottom = (height + s) / 2
+        img = img.crop((left, top, right, bottom))
+
+        img = np.asarray(img).astype(np.float32) / 255.
+        img = img[..., None] 
+
+        # crop patch size
+        if self.num_patches_per_img != 1:
+            num_patches_per_row = self.full_image_size[0] // self.patch_size[0]  # width
+            row_idx, col_idx = patch_idx // num_patches_per_row, patch_idx % num_patches_per_row
+            y, x = row_idx * self.patch_size[1], col_idx * self.patch_size[0]
+            img = img[y:y+self.patch_size[1], x:x+self.patch_size[0]]
+
+        return torch.from_numpy(img), torch.tensor(idx, dtype=torch.int64)
 
 class CTSheppDataset(torch.utils.data.Dataset):
 

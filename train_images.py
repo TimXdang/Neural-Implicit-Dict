@@ -52,7 +52,7 @@ def render(model, render_loader, coords_loader, args, current_epoch, save_dir, d
         images = torch.cat(list_rgb, 1).reshape(B // N, N, H, W, C).permute([0, 4, 2, 3, 1]).reshape(B // N, -1, N) # [N, CxHxW, L]
         images = F.fold(images, (orig_H, orig_W), kernel_size=(H, W), stride=(H, W)).permute([0, 2, 3, 1]) # [N, H, W, C]
         for img in images:
-            img = np.clip(img.numpy() * 255, 0, 255).astype(np.uint8)
+            img = np.clip(img.numpy() * 255, 0, 255).astype(np.uint8).squeeze(2)
             imageio.imwrite(os.path.join(save_dir, f'test_{j:04d}.png'), img)
             j += 1
 
@@ -271,8 +271,8 @@ def main(args):
         test_dataset = CelebADataset(root=args.data_dir, split='test', subset=args.test_subset, downsampled_size=(128, 128), patch_size=(args.patch_size, args.patch_size))
         render_dataset = CelebADataset(root=args.data_dir, split='test', subset=args.render_subset, downsampled_size=(128, 128), patch_size=(args.patch_size, args.patch_size))
     elif args.dataset == 'imagefolder':
-        train_dataset = ImageFolderDataset(root=os.path.join(args.data_dir, 'train'))
-        test_dataset = ImageFolderDataset(root=os.path.join(args.data_dir, 'test'))
+        train_dataset = ImageFolderDataset(root=os.path.join(args.data_dir, 'train'), patch_size=(args.patch_size, args.patch_size))
+        test_dataset = ImageFolderDataset(root=os.path.join(args.data_dir, 'test'), patch_size=(args.patch_size, args.patch_size))
         render_dataset = test_dataset
     else:
         raise ValueError(f'Unknown dataset type: {args.dataset}')
@@ -303,7 +303,7 @@ def main(args):
         model.freeze_dict()
 
     model_params = model.code_parameters() if args.finetune else model.parameters()
-    optimizer = torch.optim.Adam(params=model_params, lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(params=model_params, lr=args.lr, weight_decay=args.weight_decay)    
 
     # load checkpoints
     start_epoch = 0
@@ -319,7 +319,7 @@ def main(args):
         ckpt = torch.load(ckpt_path)
         start_epoch = ckpt['current_epoch']
         model.load_state_dict(ckpt['model'])
-        optimizer.load_state_dict(ckpt['optimizer'])
+        #optimizer.load_state_dict(ckpt['optimizer'])
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     # tensorboard logger
@@ -329,6 +329,21 @@ def main(args):
 
     # training
     if args.test_only:
+        with tqdm(total=len(val_loader) * args.num_epochs) as pbar:
+
+            pbar.update(len(val_loader) * start_epoch)
+            for current_epoch in range(start_epoch, args.num_epochs+1):
+                if args.inner_loop == 'recursive':
+                    train_one_epoch_recursive(model, optimizer, val_loader, val_coords, args, writer, current_epoch, device, pbar)
+                else:
+                    train_one_epoch(model, optimizer, val_loader, val_coords, args, writer, current_epoch, device, pbar)
+
+                if current_epoch > 0 and current_epoch % args.epochs_til_render == 0:
+                    pbar.set_description('Rendering ...')
+                    pbar.refresh()
+                    save_dir = os.path.join(args.log_dir, f'render_{current_epoch:04d}')
+                    os.makedirs(save_dir, exist_ok=True)
+                    render(model, render_loader, val_coords, args, current_epoch, save_dir, device)
         # make full testing
         print("Running full validation set...")
         time0 = time.time()

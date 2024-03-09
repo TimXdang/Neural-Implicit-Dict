@@ -1,6 +1,6 @@
-dataset=celeba
+dataset=imagefolder
 
-batch_size=256
+batch_size=225
 chunk_size=1024
 loss_l1=0.01
 inner_loop=recursive
@@ -10,9 +10,9 @@ hidden_dim=512
 num_experts=4096
 num_topk=256
 
-pos_emb=ffm
-act_type=relu
-gate_type=resnet
+pos_emb=Id
+act_type=sine
+gate_type=codebook
 
 ffm_map_size=2048
 ffm_map_scale=256
@@ -21,7 +21,7 @@ gffm_map_size=4096
 kernel=exp2
 length_scale=64
 
-num_epochs=5000
-epochs_til_eval=5000
-epochs_til_render=5000
+num_epochs=3000
+epochs_til_eval=100
+epochs_til_render=100
 epochs_til_ckpt=1000
